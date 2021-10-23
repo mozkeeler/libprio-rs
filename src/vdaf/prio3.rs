@@ -5,6 +5,8 @@
 //! [[VDAF](https://cjpatton.github.io/vdaf/draft-patton-cfrg-vdaf.html)]. It is constructed from a
 //! [`Value`].
 
+// TODO(cjpatton) Have `Value` output its truncated "output share".
+
 use crate::field::FieldElement;
 use crate::pcp::types::TypeError;
 use crate::pcp::{decide, prove, query, PcpError, Proof, Value, Verifier};
@@ -49,6 +51,12 @@ pub enum Share<F> {
     Leader(Vec<F>),
 
     /// A compressed share, typically sent to the helper.
+    //
+    // TODO(cjpatton) Harmonize this type with the VDAF specification. The `length` parameter
+    // allows us to generate an input or proof share without knowing in advance how long this needs
+    // to be. However, the spec requires that the length of both are well-known, hence they're not
+    // encoded by the input share. We can avoid this by having [`Value::Param`] define these
+    // values.
     Helper {
         /// The seed for the pseudorandom generator.
         seed: Key,
