@@ -11,6 +11,7 @@
 use std::convert::TryFrom;
 
 use crate::field::FieldElement;
+use crate::pcp::types::TypeError;
 use crate::pcp::PcpError;
 use crate::prng::{Prng, PrngError};
 use crate::vdaf::suite::{Key, KeyStream, SuiteError};
@@ -26,6 +27,10 @@ pub enum VdafError {
     /// PCP error.
     #[error("pcp error: {0}")]
     Pcp(#[from] PcpError),
+
+    /// Type error.
+    #[error("type error: {0}")]
+    Type(#[from] TypeError),
 
     /// PRNG error.
     #[error("prng error: {0}")]

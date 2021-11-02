@@ -24,7 +24,7 @@
 //! use prio::field::{random_vector, FieldElement, Field64};
 //!
 //! // The prover chooses a measurement.
-//! let input: Count<Field64> = Count::new(0).unwrap();
+//! let input: Count<Field64> = Count::new(false);
 //!
 //! // The prover and verifier agree on "joint randomness" used to generate and
 //! // check the proof. The application needs to ensure that the prover
@@ -61,6 +61,7 @@
 use crate::fft::{discrete_fourier_transform, discrete_fourier_transform_inv_finish, FftError};
 use crate::field::{FieldElement, FieldError};
 use crate::fp::log2;
+use crate::pcp::types::TypeError;
 use crate::polynomial::poly_eval;
 use serde::{Deserialize, Serialize};
 use std::any::Any;
@@ -93,10 +94,6 @@ pub enum PcpError {
     #[error("validity circuit error: {0}")]
     Valid(String),
 
-    /// Value error.
-    #[error("value error: {0}")]
-    Value(String),
-
     /// Returned if an FFT operation propagates an error.
     #[error("FFT error: {0}")]
     Fft(#[from] FftError),
@@ -113,7 +110,7 @@ pub trait Value:
     + PartialEq
     + Eq
     + Debug
-    + for<'a> TryFrom<(<Self as Value>::Param, &'a [Self::Field]), Error = PcpError>
+    + for<'a> TryFrom<(<Self as Value>::Param, &'a [Self::Field]), Error = TypeError>
 {
     /// The finite field used for this type.
     type Field: FieldElement;
@@ -130,7 +127,7 @@ pub trait Value:
     /// use prio::pcp::Value;
     /// use prio::field::{random_vector, FieldElement, Field64};
     ///
-    /// let x: Count<Field64> = Count::new(1).unwrap();
+    /// let x: Count<Field64> = Count::new(false);
     /// let joint_rand = random_vector(x.joint_rand_len()).unwrap();
     /// let v = x.valid(&mut x.gadget(), &joint_rand).unwrap();
     /// assert_eq!(v, Field64::zero());
@@ -676,6 +673,7 @@ mod tests {
     use crate::field::{random_vector, split_vector, Field126};
     use crate::pcp::gadgets::{Mul, PolyEval};
     use crate::pcp::types::Count;
+    use crate::pcp::types::TypeError;
     use crate::polynomial::poly_range_check;
 
     // Simple integration test for the core PCP logic. You'll find more extensive unit tests for
@@ -725,7 +723,7 @@ mod tests {
 
     #[test]
     fn test_decide() {
-        let x: Count<Field126> = Count::new(1).unwrap();
+        let x: Count<Field126> = Count::new(true);
         let joint_rand = random_vector(x.joint_rand_len()).unwrap();
         let prove_rand = random_vector(x.prove_rand_len()).unwrap();
         let query_rand = random_vector(x.query_rand_len()).unwrap();
@@ -835,9 +833,9 @@ mod tests {
     }
 
     impl<F: FieldElement> TryFrom<((), &[F])> for TestValue<F> {
-        type Error = PcpError;
+        type Error = TypeError;
 
-        fn try_from(val: ((), &[F])) -> Result<Self, PcpError> {
+        fn try_from(val: ((), &[F])) -> Result<Self, TypeError> {
             Ok(Self {
                 data: val.1.to_vec(),
             })

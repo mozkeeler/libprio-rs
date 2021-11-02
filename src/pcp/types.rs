@@ -10,6 +10,14 @@ use crate::polynomial::poly_range_check;
 use std::convert::TryFrom;
 use std::mem::size_of;
 
+/// Errors propagated by methods in this module.
+#[derive(Debug, PartialEq, thiserror::Error)]
+pub enum TypeError {
+    /// Encountered an error while trying to construct an instance of some type.
+    #[error("failed to instantiate type: {0}")]
+    Instantiate(&'static str),
+}
+
 /// The counter data type. Each measurement is `0` or `1` and the aggregate result is the sum of
 /// the measurements (i.e., the number of `1s`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -19,18 +27,15 @@ pub struct Count<F: FieldElement> {
 }
 
 impl<F: FieldElement> Count<F> {
-    /// Construct a new counter.
-    pub fn new(value: u64) -> Result<Self, PcpError> {
-        Ok(Self {
+    /// Encodes a boolean as a value of this type.
+    pub fn new(b: bool) -> Self {
+        Self {
             range: poly_range_check(0, 2),
-            data: vec![match value {
-                1 => F::one(),
-                0 => F::zero(),
-                _ => {
-                    return Err(PcpError::Value("Count value  must be 0 or 1".to_string()));
-                }
+            data: vec![match b {
+                true => F::one(),
+                false => F::zero(),
             }],
-        })
+        }
     }
 }
 
@@ -93,9 +98,9 @@ impl<F: FieldElement> Value for Count<F> {
 }
 
 impl<F: FieldElement> TryFrom<((), &[F])> for Count<F> {
-    type Error = PcpError;
+    type Error = TypeError;
 
-    fn try_from(val: ((), &[F])) -> Result<Self, PcpError> {
+    fn try_from(val: ((), &[F])) -> Result<Self, TypeError> {
         Ok(Self {
             data: val.1.to_vec(),
             range: poly_range_check(0, 2),
@@ -188,9 +193,9 @@ impl<F: FieldElement> Value for PolyCheckedVector<F> {
 }
 
 impl<F: FieldElement> TryFrom<(Vec<F>, &[F])> for PolyCheckedVector<F> {
-    type Error = PcpError;
+    type Error = TypeError;
 
-    fn try_from(val: (Vec<F>, &[F])) -> Result<Self, PcpError> {
+    fn try_from(val: (Vec<F>, &[F])) -> Result<Self, TypeError> {
         Ok(Self {
             data: val.1.to_vec(),
             poly: val.0,
@@ -220,10 +225,10 @@ pub struct MeanVarUnsignedVector<F: FieldElement> {
 impl<F: FieldElement> MeanVarUnsignedVector<F> {
     /// Encodes `measurement` as an instance of the MeanVarUnsignedVector type. `bits` specifies
     /// the maximum length of each integer in bits.
-    pub fn new(bits: usize, measurement: &[F::Integer]) -> Result<Self, PcpError> {
+    pub fn new(bits: usize, measurement: &[F::Integer]) -> Result<Self, TypeError> {
         if bits > (size_of::<F::Integer>() << 3) {
-            return Err(PcpError::Value(
-                "MeanVarUnsignedVector: bits exceeds bit length of the field's integer representation".to_string(),
+            return Err(TypeError::Instantiate(
+                "MeanVarUnsignedVector: bits exceeds bit length of the field's integer representation",
             ));
         }
 
@@ -232,8 +237,8 @@ impl<F: FieldElement> MeanVarUnsignedVector<F> {
         let mut data: Vec<F> = Vec::with_capacity((bits + 1) * measurement.len());
         for &int in measurement {
             if int >= max {
-                return Err(PcpError::Value(
-                    "MeanVarUnsignedVector: input overflow".to_string(),
+                return Err(TypeError::Instantiate(
+                    "MeanVarUnsignedVector: input overflow",
                 ));
             }
 
@@ -345,16 +350,16 @@ impl<F: FieldElement> Value for MeanVarUnsignedVector<F> {
 }
 
 impl<F: FieldElement> TryFrom<(usize, &[F])> for MeanVarUnsignedVector<F> {
-    type Error = PcpError;
+    type Error = TypeError;
 
-    fn try_from(val: (usize, &[F])) -> Result<Self, PcpError> {
+    fn try_from(val: (usize, &[F])) -> Result<Self, TypeError> {
         let bits = val.0;
         let data = val.1.to_vec();
         let len = data.len() / (bits + 1);
 
         if data.len() % (bits + 1) != 0 {
-            return Err(PcpError::Value(
-                "MeanVarUnsignedVector: length of data not divisible by chunk size".to_string(),
+            return Err(TypeError::Instantiate(
+                "MeanVarUnsignedVector: length of data not divisible by chunk size",
             ));
         }
 
@@ -385,14 +390,14 @@ mod tests {
     fn test_count() {
         // Test PCP on valid input.
         pcp_validity_test(
-            &Count::<TestField>::new(1).unwrap(),
+            &Count::<TestField>::new(true),
             &ValidityTestCase {
                 expect_valid: true,
                 expected_proof_len: 9,
             },
         );
         pcp_validity_test(
-            &Count::<TestField>::new(0).unwrap(),
+            &Count::<TestField>::new(false),
             &ValidityTestCase {
                 expect_valid: true,
                 expected_proof_len: 9,
