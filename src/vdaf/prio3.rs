@@ -19,11 +19,16 @@ use crate::vdaf::{
     Aggregator, Client, Collector, PrepareStep, PrepareTransition, Share, Vdaf, VdafError,
 };
 use serde::{Deserialize, Serialize};
+use std::convert::TryFrom;
 use std::iter::IntoIterator;
 use std::marker::PhantomData;
 
-struct Prio3<'a, V, M, A> {
+struct Prio3<'a, V, M, A>
+where
+    V: Value<'a>,
+{
     suite: Suite,
+    param: V::Param,
     num_aggregators: u8,
     phantom: PhantomData<&'a (V, M, A)>,
 }
@@ -56,9 +61,10 @@ pub struct Prio3InputShare {}
 
 impl<'a, V, M, A> Client for Prio3<'a, V, M, A>
 where
-    V: Value<'a>,
+    V: Value<'a> + for<'b> TryFrom<(&'b M, &'b V::Param), Error = VdafError>,
 {
     fn shard(&self, public_param: &(), measurement: &M) -> Result<Vec<Prio3InputShare>, VdafError> {
+        let input = V::try_from((measurement, &self.param))?;
         panic!("XXX");
     }
 }
