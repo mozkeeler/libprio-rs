@@ -213,6 +213,6 @@ pub trait Aggregatable {
     fn merge(&mut self, agg_share: &Self) -> Result<(), VdafError>;
 }
 
-pub mod hits;
+//pub mod hits;
 pub mod prio3;
 pub mod suite;

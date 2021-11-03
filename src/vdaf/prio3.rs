@@ -16,7 +16,8 @@ use crate::pcp::{decide, prove, query, Proof, Value, ValueParam, Verifier};
 use crate::prng::Prng;
 use crate::vdaf::suite::{Key, KeyDeriver, KeyStream, Suite};
 use crate::vdaf::{
-    Aggregator, Client, Collector, PrepareStep, PrepareTransition, Share, Vdaf, VdafError,
+    Aggregatable, Aggregator, Client, Collector, PrepareStep, PrepareTransition, Share, Vdaf,
+    VdafError,
 };
 use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
@@ -55,7 +56,15 @@ where
     }
 }
 
-pub struct Prio3VerifyParam {}
+/// The verification parameter used by each aggregator to evaluate the VDAF.
+#[derive(Clone, Debug)]
+pub struct Prio3VerifyParam {
+    /// Key used to derive the query randomness from the nonce.
+    pub query_rand_init: Key,
+
+    /// The identity of the aggregator.
+    pub aggregator_id: u8,
+}
 
 /// The message sent by the client to each aggregator. This includes the client's input share and
 /// the initial message of the input-validation protocol.
@@ -211,9 +220,61 @@ where
         verify_param: &Prio3VerifyParam,
         _agg_param: &(),
         nonce: &[u8],
-        input_share: &Prio3InputShare<V::Field>,
+        msg: &Prio3InputShare<V::Field>,
     ) -> Result<Prio3PrepareStep, VdafError> {
-        panic!("XXX");
+        let mut deriver = KeyDeriver::from_key(&verify_param.query_rand_init);
+        deriver.update(&[255]);
+        deriver.update(nonce);
+        let query_rand_seed = deriver.finish();
+
+        // XXX Avoid clone?
+        let input_share_data: Vec<V::Field> =
+            msg.input_share.clone().into_vec(self.param.input_len())?;
+        let input_share = V::new_share(input_share_data, &self.param, self.num_aggregators)?;
+
+        // XXX Avoid clone?
+        let proof_share_data: Vec<V::Field> =
+            msg.proof_share.clone().into_vec(self.param.proof_len())?;
+        let proof_share = Proof::from(proof_share_data);
+
+        // Compute the joint randomness.
+        let mut deriver = KeyDeriver::from_key(&msg.blind);
+        deriver.update(&[verify_param.aggregator_id]);
+        for x in input_share.as_slice() {
+            deriver.update(&(*x).into());
+        }
+        let joint_rand_seed_share = deriver.finish();
+
+        let mut joint_rand_seed = Key::uninitialized(query_rand_seed.suite());
+        for (j, x) in joint_rand_seed.as_mut_slice().iter_mut().enumerate() {
+            *x = msg.joint_rand_seed_hint.as_slice()[j] ^ joint_rand_seed_share.as_slice()[j];
+        }
+
+        let prng: Prng<V::Field> = Prng::from_key_stream(KeyStream::from_key(&joint_rand_seed));
+        let joint_rand: Vec<V::Field> = prng.take(self.param.joint_rand_len()).collect();
+
+        // Compute the query randomness.
+        let prng: Prng<V::Field> = Prng::from_key_stream(KeyStream::from_key(&query_rand_seed));
+        let query_rand: Vec<V::Field> = prng.take(self.param.query_rand_len()).collect();
+
+        // Run the query-generation algorithm.
+        let verifier_share = query(&input_share, &proof_share, &query_rand, &joint_rand)?;
+
+        // Prepare the output state and message.
+        /*
+        let state = VerifyState {
+            input_share,
+            joint_rand_seed,
+            phantom: PhantomData,
+        };
+
+        let out = VerifyMessage {
+            verifier_share,
+            joint_rand_seed_share,
+        };
+        */
+
+        Ok(Prio3PrepareStep {})
     }
 
     /// Aggregates a sequence of output shares into an aggregate share.
@@ -233,7 +294,7 @@ impl<F: FieldElement> PrepareStep<Vec<F>> for Prio3PrepareStep {
     type Output = Prio3Verify;
 
     fn step<M: IntoIterator<Item = Prio3Verify>>(
-        mut self,
+        self,
         inputs: M,
     ) -> PrepareTransition<Self, Vec<F>> {
         panic!("XXX");
@@ -249,7 +310,13 @@ where
         &self,
         _agg_param: &(),
         agg_shares: It,
-    ) -> Result<Self::AggregateResult, VdafError> {
+    ) -> Result<A, VdafError> {
+        panic!("XXX");
+    }
+}
+
+impl<F: FieldElement> Aggregatable for Vec<F> {
+    fn merge(&mut self, agg_share: &Vec<F>) -> Result<(), VdafError> {
         panic!("XXX");
     }
 }
