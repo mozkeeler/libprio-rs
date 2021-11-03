@@ -29,7 +29,7 @@ where
 {
     suite: Suite,
     param: V::Param,
-    num_aggregators: u8,
+    num_aggregators: usize,
     phantom: PhantomData<&'a (V, M, A)>,
 }
 
@@ -42,7 +42,7 @@ where
     type AggregationParam = ();
     type PublicParam = ();
     type VerifyParam = Prio3VerifyParam;
-    type InputShare = Prio3InputShare;
+    type InputShare = Prio3InputShare<V::Field>;
     type OutputShare = Vec<V::Field>;
     type AggregateShare = Vec<V::Field>;
 
@@ -51,21 +51,147 @@ where
     }
 
     fn num_aggregators(&self) -> usize {
-        self.num_aggregators as usize
+        self.num_aggregators
     }
 }
 
 pub struct Prio3VerifyParam {}
 
-pub struct Prio3InputShare {}
+/// The message sent by the client to each aggregator. This includes the client's input share and
+/// the initial message of the input-validation protocol.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Prio3InputShare<F> {
+    /// The input share.
+    pub input_share: Share<F>,
+
+    /// The proof share.
+    pub proof_share: Share<F>,
+
+    /// The sum of the joint randomness seed shares sent to the other aggregators.
+    //
+    // TODO(cjpatton) If `input.joint_rand_len() == 0`, then we don't need to bother with the
+    // joint randomness seed at all and make this optional.
+    pub joint_rand_seed_hint: Key,
+
+    /// The blinding factor, used to derive the aggregator's joint randomness seed share.
+    pub blind: Key,
+}
 
 impl<'a, V, M, A> Client for Prio3<'a, V, M, A>
 where
     V: Value<'a> + for<'b> TryFrom<(&'b M, &'b V::Param), Error = VdafError>,
 {
-    fn shard(&self, public_param: &(), measurement: &M) -> Result<Vec<Prio3InputShare>, VdafError> {
+    fn shard(
+        &self,
+        public_param: &(),
+        measurement: &M,
+    ) -> Result<Vec<Prio3InputShare<V::Field>>, VdafError> {
         let input = V::try_from((measurement, &self.param))?;
-        panic!("XXX");
+
+        // XXX useless local variables
+        let input_len = input.as_slice().len();
+        let num_shares = self.num_aggregators;
+        let param = input.param();
+        let suite = self.suite;
+
+        // Generate the input shares and compute the joint randomness.
+        let mut helper_shares = vec![HelperShare::new(suite)?; num_shares - 1];
+        let mut leader_input_share = input.as_slice().to_vec();
+        let mut joint_rand_seed = Key::uninitialized(suite);
+        let mut aggregator_id = 1; // ID of the first helper
+        for helper in helper_shares.iter_mut() {
+            let mut deriver = KeyDeriver::from_key(&helper.blind);
+            deriver.update(&[aggregator_id]);
+            let prng: Prng<V::Field> =
+                Prng::from_key_stream(KeyStream::from_key(&helper.input_share));
+            for (x, y) in leader_input_share.iter_mut().zip(prng).take(input_len) {
+                *x -= y;
+                deriver.update(&y.into());
+            }
+
+            helper.joint_rand_seed_hint = deriver.finish();
+            for (x, y) in joint_rand_seed
+                .as_mut_slice()
+                .iter_mut()
+                .zip(helper.joint_rand_seed_hint.as_slice().iter())
+            {
+                *x ^= y;
+            }
+
+            aggregator_id += 1; // ID of the next helper
+        }
+
+        let leader_blind = Key::generate(suite)?;
+
+        let mut deriver = KeyDeriver::from_key(&leader_blind);
+        deriver.update(&[0]); // ID of the leader
+        for x in leader_input_share.iter() {
+            deriver.update(&(*x).into());
+        }
+
+        let mut leader_joint_rand_seed_hint = deriver.finish();
+        for (x, y) in joint_rand_seed
+            .as_mut_slice()
+            .iter_mut()
+            .zip(leader_joint_rand_seed_hint.as_slice().iter())
+        {
+            *x ^= y;
+        }
+
+        // Run the proof-generation algorithm.
+        let prng: Prng<V::Field> = Prng::from_key_stream(KeyStream::from_key(&joint_rand_seed));
+        let joint_rand: Vec<V::Field> = prng.take(param.joint_rand_len()).collect();
+        let prng: Prng<V::Field> = Prng::generate(suite)?;
+        let prove_rand: Vec<V::Field> = prng.take(param.prove_rand_len()).collect();
+        let proof = prove(&input, &prove_rand, &joint_rand)?;
+
+        // Generate the proof shares and finalize the joint randomness seed hints.
+        let proof_len = proof.as_slice().len();
+        let mut leader_proof_share = proof.data;
+        for helper in helper_shares.iter_mut() {
+            let prng: Prng<V::Field> =
+                Prng::from_key_stream(KeyStream::from_key(&helper.proof_share));
+            for (x, y) in leader_proof_share.iter_mut().zip(prng).take(proof_len) {
+                *x -= y;
+            }
+
+            for (x, y) in helper
+                .joint_rand_seed_hint
+                .as_mut_slice()
+                .iter_mut()
+                .zip(joint_rand_seed.as_slice().iter())
+            {
+                *x ^= y;
+            }
+        }
+
+        for (x, y) in leader_joint_rand_seed_hint
+            .as_mut_slice()
+            .iter_mut()
+            .zip(joint_rand_seed.as_slice().iter())
+        {
+            *x ^= y;
+        }
+
+        // Prepare the output messages.
+        let mut out = Vec::with_capacity(num_shares);
+        out.push(Prio3InputShare {
+            input_share: Share::Leader(leader_input_share),
+            proof_share: Share::Leader(leader_proof_share),
+            joint_rand_seed_hint: leader_joint_rand_seed_hint,
+            blind: leader_blind,
+        });
+
+        for helper in helper_shares.into_iter() {
+            out.push(Prio3InputShare {
+                input_share: Share::Helper(helper.input_share),
+                proof_share: Share::Helper(helper.proof_share),
+                joint_rand_seed_hint: helper.joint_rand_seed_hint,
+                blind: helper.blind,
+            });
+        }
+
+        Ok(out)
     }
 }
 
@@ -85,7 +211,7 @@ where
         verify_param: &Prio3VerifyParam,
         _agg_param: &(),
         nonce: &[u8],
-        input_share: &Prio3InputShare,
+        input_share: &Prio3InputShare<V::Field>,
     ) -> Result<Prio3PrepareStep, VdafError> {
         panic!("XXX");
     }
