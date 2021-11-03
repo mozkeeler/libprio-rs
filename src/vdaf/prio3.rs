@@ -15,10 +15,112 @@ use crate::field::FieldElement;
 use crate::pcp::{decide, prove, query, Proof, Value, ValueParam, Verifier};
 use crate::prng::Prng;
 use crate::vdaf::suite::{Key, KeyDeriver, KeyStream, Suite};
-use crate::vdaf::{Share, VdafError};
+use crate::vdaf::{
+    Aggregator, Client, Collector, PrepareStep, PrepareTransition, Share, Vdaf, VdafError,
+};
 use serde::{Deserialize, Serialize};
 use std::iter::IntoIterator;
 use std::marker::PhantomData;
+
+struct Prio3<'a, V, M, A> {
+    suite: Suite,
+    num_aggregators: u8,
+    phantom: PhantomData<&'a (V, M, A)>,
+}
+
+impl<'a, V, M, A> Vdaf for Prio3<'a, V, M, A>
+where
+    V: Value<'a>,
+{
+    type Measurement = M;
+    type AggregateResult = A;
+    type AggregationParam = ();
+    type PublicParam = ();
+    type VerifyParam = Prio3VerifyParam;
+    type InputShare = Prio3InputShare;
+    type OutputShare = Vec<V::Field>;
+    type AggregateShare = Vec<V::Field>;
+
+    fn setup(&self) -> Result<((), Vec<Prio3VerifyParam>), VdafError> {
+        panic!("XXX");
+    }
+
+    fn num_aggregators(&self) -> usize {
+        self.num_aggregators as usize
+    }
+}
+
+pub struct Prio3VerifyParam {}
+
+pub struct Prio3InputShare {}
+
+impl<'a, V, M, A> Client for Prio3<'a, V, M, A>
+where
+    V: Value<'a>,
+{
+    fn shard(&self, public_param: &(), measurement: &M) -> Result<Vec<Prio3InputShare>, VdafError> {
+        panic!("XXX");
+    }
+}
+
+pub struct Prio3PrepareStep {}
+
+impl<'a, V, M, A> Aggregator for Prio3<'a, V, M, A>
+where
+    V: Value<'a>,
+{
+    /// Initial state of the Aggregator during the Prepare process.
+    type PrepareInit = Prio3PrepareStep;
+
+    /// Begins the Prepare process with the other Aggregators. The result of this process is
+    /// the Aggregator's output share.
+    fn prepare(
+        &self,
+        verify_param: &Prio3VerifyParam,
+        _agg_param: &(),
+        nonce: &[u8],
+        input_share: &Prio3InputShare,
+    ) -> Result<Prio3PrepareStep, VdafError> {
+        panic!("XXX");
+    }
+
+    /// Aggregates a sequence of output shares into an aggregate share.
+    fn aggregate<It: IntoIterator<Item = Vec<V::Field>>>(
+        &self,
+        _agg_param: &(),
+        output_shares: It,
+    ) -> Result<Vec<V::Field>, VdafError> {
+        panic!("XXX");
+    }
+}
+
+pub struct Prio3Verify {}
+
+impl<F: FieldElement> PrepareStep<Vec<F>> for Prio3PrepareStep {
+    type Input = Prio3Verify;
+    type Output = Prio3Verify;
+
+    fn step<M: IntoIterator<Item = Prio3Verify>>(
+        mut self,
+        inputs: M,
+    ) -> PrepareTransition<Self, Vec<F>> {
+        panic!("XXX");
+    }
+}
+
+impl<'a, V, M, A> Collector for Prio3<'a, V, M, A>
+where
+    V: Value<'a>,
+{
+    /// Combines aggregate shares into the aggregate result.
+    fn unshard<It: IntoIterator<Item = Vec<V::Field>>>(
+        &self,
+        _agg_param: &(),
+        agg_shares: It,
+    ) -> Result<Self::AggregateResult, VdafError> {
+        panic!("XXX");
+    }
+}
 
 /// The message sent by the client to each aggregator. This includes the client's input share and
 /// the initial message of the input-validation protocol.
