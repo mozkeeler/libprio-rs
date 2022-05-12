@@ -577,6 +577,15 @@ make_field!(
     ByteOrder::BigEndian,
 );
 
+/// Add a vector of fields into the given accumulator. Each element in the vector is scaled by
+/// 2^i, where i is the index of that element.
+pub(crate) fn add_vector<F: FieldElement>(accumulator: &mut F, vector: &[F]) -> () {
+    let two = F::one() + F::one();
+    for (i, v) in vector.iter().enumerate() {
+        *accumulator += *v * two.pow(F::Integer::try_from(i).unwrap());
+    }
+}
+
 /// Merge two vectors of fields by summing other_vector into accumulator.
 ///
 /// # Errors
@@ -640,6 +649,15 @@ mod tests {
         big_endian_encoded.reverse();
 
         assert_eq!(little_endian_encoded, big_endian_encoded);
+    }
+
+    #[test]
+    fn test_add() {
+        let mut accumulator = Field32(8);
+        let vector = vec![Field32(1), Field32(0), Field32(7)];
+        add_vector(&mut accumulator, &vector);
+
+        assert_eq!(accumulator, Field32(1 + 8 + 28));
     }
 
     #[test]

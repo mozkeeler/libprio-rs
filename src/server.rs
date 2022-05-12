@@ -4,7 +4,7 @@
 //! The Prio v2 server. Only 0 / 1 vectors are supported for now.
 use crate::{
     encrypt::{decrypt_share, EncryptError, PrivateKey},
-    field::{merge_vector, FieldElement, FieldError},
+    field::{add_vector, merge_vector, FieldElement, FieldError},
     polynomial::{poly_interpret_eval, PolyAuxMemory},
     prng::{Prng, PrngError},
     util::{proof_length, unpack_proof, SerializeError},
@@ -66,6 +66,7 @@ pub struct Server<F> {
     prng: Prng<F, SeedStreamAes128>,
     dimension: usize,
     is_first_server: bool,
+    sum_accumulator: F,
     accumulator: Vec<F>,
     validation_mem: ValidationMemory<F>,
     private_key: PrivateKey,
@@ -87,6 +88,7 @@ impl<F: FieldElement> Server<F> {
             prng: Prng::new()?,
             dimension,
             is_first_server,
+            sum_accumulator: F::zero(),
             accumulator: vec![F::zero(); dimension],
             validation_mem: ValidationMemory::new(dimension),
             private_key,
@@ -131,6 +133,28 @@ impl<F: FieldElement> Server<F> {
         )
     }
 
+    /// Add the content of the encrypted share into the accumulator (by sum, not by vector)
+    ///
+    /// This only changes the accumulator if the verification messages `v1` and
+    /// `v2` indicate that the share passed validation.
+    pub fn aggregate_by_sum(
+        &mut self,
+        share: &[u8],
+        v1: &VerificationMessage<F>,
+        v2: &VerificationMessage<F>,
+    ) -> Result<bool, ServerError> {
+        let share_field = self.deserialize_share(share)?;
+        let is_valid = is_valid_share(v1, v2);
+        if is_valid {
+            // Add to the accumulator. share_field also includes the proof
+            // encoding, so we slice off the first dimension fields, which are
+            // the actual data share.
+            add_vector(&mut self.sum_accumulator, &share_field[..self.dimension]);
+        }
+
+        Ok(is_valid)
+    }
+
     /// Add the content of the encrypted share into the accumulator
     ///
     /// This only changes the accumulator if the verification messages `v1` and
@@ -153,12 +177,24 @@ impl<F: FieldElement> Server<F> {
         Ok(is_valid)
     }
 
+    /// Return the current accumulated shares by sum.
+    pub fn total_sum(&self) -> &F {
+        &self.sum_accumulator
+    }
+
     /// Return the current accumulated shares.
     ///
     /// These can be merged together using
     /// [`reconstruct_shares`](../util/fn.reconstruct_shares.html).
     pub fn total_shares(&self) -> &[F] {
         &self.accumulator
+    }
+
+    /// Adds sum from another server.
+    ///
+    /// This modifies the current accumulator.
+    pub fn add_total_shares(&mut self, other_total_shares: &F) -> () {
+        self.sum_accumulator += *other_total_shares
     }
 
     /// Merge shares from another server.
